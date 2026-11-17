@@ -5,6 +5,49 @@ date: "2026-11-16"
 ---
 
 ```{r setup, include=FALSE}
-
+library(tidyverse)
+set.seed(1)
 ```
+
+
+## Problem 1
+### Function
+```{r p1_function}
+bday_sim = function(n) {
+
+  birthdays = sample(1:365, n, replace = TRUE)
+
+  tibble(
+    shared = as.numeric(length(unique(birthdays)) < n))
+}
+```
+### Simulation
+
+```{r p1_simulation}
+bday_results_df =
+  expand_grid(
+    group_size = 2:50,
+    iter = 1:10000) |>
+  mutate(
+    estimate_df = map(group_size, bday_sim)) |>
+  unnest(estimate_df) |>
+  group_by(group_size) |>
+  summarize(prob_shared = mean(shared))
+bday_results_df |> 
+  filter(group_size %in% c(10, 20, 23, 30, 40, 50)) |> 
+  knitr::kable(digits = 3)
+```
+
+### Plot
+
+```{r p1_plot}
+bday_results_df |>
+  ggplot(aes(x = group_size, y = prob_shared)) +
+  geom_point() +
+  geom_path()
+```
+The probability that at least two people share a birthday increases with group size, and the increase is not linear. With 5 people the probability is `r bday_results_df |> filter(group_size == 5) |> pull(prob_shared)`. It first passes 0.5 at a group size of `r bday_results_df |> filter(prob_shared >= 0.5) |> pull(group_size) |> min()`, and with 50 people it is `r bday_results_df |> filter(group_size == 50) |> pull(prob_shared)`. The curve climbs fastest at moderate group sizes and then levels off near 1. A shared birthday becomes likely in fairly small groups because the number of pairs of people grows much faster than the number of people.
+
+
+
 
