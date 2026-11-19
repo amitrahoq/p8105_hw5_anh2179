@@ -48,6 +48,148 @@ bday_results_df |>
 ```
 The probability that at least two people share a birthday increases with group size, and the increase is not linear. With 5 people the probability is `r bday_results_df |> filter(group_size == 5) |> pull(prob_shared)`. It first passes 0.5 at a group size of `r bday_results_df |> filter(prob_shared >= 0.5) |> pull(group_size) |> min()`, and with 50 people it is `r bday_results_df |> filter(group_size == 50) |> pull(prob_shared)`. The curve climbs fastest at moderate group sizes and then levels off near 1. A shared birthday becomes likely in fairly small groups because the number of pairs of people grows much faster than the number of people.
 
+## Problem 2
+
+### Import
+
+```{r p2_import, message = FALSE}
+full_df =
+  tibble(
+    files = list.files("data/"),
+    path = str_c("data/", files)
+  ) |>
+  mutate(data = map(path, read_csv)) |>
+  unnest(cols = data)
+```
+
+### Tidy
+
+```{r p2_tidy}
+tidy_df =
+  full_df |>
+  mutate(
+    files = str_replace(files, ".csv", ""),
+    arm = str_sub(files, 1, 3),
+    arm = str_replace(arm, "con", "control"),
+    arm = str_replace(arm, "exp", "experimental"),
+    subject_id = str_sub(files, 5, 6)) |>
+  pivot_longer(
+    week_1:week_8,
+    names_to = "week",
+    values_to = "outcome",
+    names_prefix = "week_") |>
+  mutate(week = as.numeric(week)) |>
+  select(arm, subject_id, week, outcome)
+```
+
+The tidy dataset has `r nrow(tidy_df)` rows and `r ncol(tidy_df)` columns: `r names(tidy_df)`. Each row is one subject's outcome in one week. Subject IDs 01–10 are used in both arms, so a subject is identified by arm and subject ID together.
+
+### Spaghetti plot
+
+```{r p2_plot}
+tidy_df |>
+  ggplot(aes(x = week, y = outcome, group = str_c(arm, subject_id), color = arm)) +
+  geom_point() +
+  geom_path() +
+  facet_grid(~arm)
+```
+
+### Group means
+```{r p2_means}
+group_means_df =
+  tidy_df |>
+  filter(week %in% c(1, 8)) |>
+  group_by(arm, week) |>
+  summarize(mean_outcome = mean(outcome))
+```
+
+At week 1 the two groups look similar. The mean outcome is `r group_means_df |> filter(arm == "control", week == 1) |> pull(mean_outcome) |> round(2)` in the control group and `r group_means_df |> filter(arm == "experimental", week == 1) |> pull(mean_outcome) |> round(2)` in the experimental group. Over the 8 weeks, outcomes in the experimental group increase steadily, while the control group stays roughly flat. By week 8 the mean outcome is `r group_means_df |> filter(arm == "control", week == 8) |> pull(mean_outcome) |> round(2)` for control and `r group_means_df |> filter(arm == "experimental", week == 8) |> pull(mean_outcome) |> round(2)` for experimental, so most experimental subjects end above the control subjects.
+
+
+## Problem 3
+
+### Function
+
+```{r p3_function}
+sim_t_test = function(mu, n = 30, sigma = 5) {
+
+  x = rnorm(n, mean = mu, sd = sigma)
+
+  t.test(x, mu = 0) |>
+    broom::tidy() |>
+    select(mu_hat = estimate, p.value)
+}
+```
+
+### Simulation
+
+```{r p3_simulation}
+sim_results_df =
+  expand_grid(
+    true_mu = 0:6,
+    iter = 1:5000
+  ) |>
+  mutate(
+    estimate_df = map(true_mu, sim_t_test)
+  ) |>
+  unnest(estimate_df) |>
+  mutate(rejected = as.numeric(p.value < 0.05))
+```
+
+### Power
+
+```{r p3_power}
+power_df =
+  sim_results_df |>
+  group_by(true_mu) |>
+  summarize(power = mean(rejected))
+
+power_df |>
+  ggplot(aes(x = true_mu, y = power)) +
+  geom_point() +
+  geom_path() +
+  labs(
+    x = "True μ",
+    y = "Power (proportion of times the null was rejected)")
+```
+
+Power increases with effect size. When μ = 0 the null is true, and the null is rejected `r power_df |> filter(true_mu == 0) |> pull(power)` of the time, close to α = 0.05. Power is `r power_df |> filter(true_mu == 1) |> pull(power)` at μ = 1, `r power_df |> filter(true_mu == 2) |> pull(power)` at μ = 2 and `r power_df |> filter(true_mu == 3) |> pull(power)` at μ = 3, and it is close to 1 for μ = 5 and 6 (`r power_df |> filter(true_mu == 6) |> pull(power)` at μ = 6). With n and σ fixed, a larger true μ makes the difference from 0 easier to detect.
+
+### Average estimates
+
+```{r p3_estimates}
+all_df =
+  sim_results_df |>
+  group_by(true_mu) |>
+  summarize(avg_mu_hat = mean(mu_hat)) |>
+  mutate(samples = "all")
+
+rejected_df =
+  sim_results_df |>
+  filter(rejected == 1) |>
+  group_by(true_mu) |>
+  summarize(avg_mu_hat = mean(mu_hat)) |>
+  mutate(samples = "rejected")
+
+estimates_df = bind_rows(all_df, rejected_df)
+```
+
+### Estimates plot
+
+```{r p3_estimates_plot}
+estimates_df |>
+  ggplot(aes(x = true_mu, y = avg_mu_hat, color = samples)) +
+  geom_point() +
+  geom_path() +
+  labs(
+    x = "True μ",
+    y = "Average estimate of μ",
+    color = "Samples")
+```
+
+### Comments
+
+Across all samples, the average μ̂ is close to the true μ for every value; at μ = 1 it is `r all_df |> filter(true_mu == 1) |> pull(avg_mu_hat) |> round(2)`. Across only the samples where the null was rejected, the average μ̂ is not equal to the true μ when power is low. At μ = 1 it is `r rejected_df |> filter(true_mu == 1) |> pull(avg_mu_hat) |> round(2)`, and at μ = 2 it is `r rejected_df |> filter(true_mu == 2) |> pull(avg_mu_hat) |> round(2)`. This happens because a sample only rejects the null when its μ̂ is far enough from 0. When the true effect is small, mostly the samples that overestimated μ get rejected, so their average is too high. As μ increases, power gets close to 1 and almost every sample is rejected. The rejected samples then make up nearly all of the samples, and their average gets close to the true μ; at μ = 6 it is `r rejected_df |> filter(true_mu == 6) |> pull(avg_mu_hat) |> round(2)`.
 
 
 
